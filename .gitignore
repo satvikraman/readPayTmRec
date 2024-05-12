@@ -1,7 +1,2 @@
 /.env
 /credentials.json
-/db
-/logs
-/paytm.ini
-/test
-/token.json
