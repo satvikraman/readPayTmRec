@@ -46,8 +46,7 @@ class paytmTradingIdeas():
                 level = logging.CRITICAL
             self.__logger = logging.getLogger(__name__)
             self.__logger.setLevel(level)
-            self.__iclick2GainDict = {}
-            self.__iclick2InvestDict = {}
+            self.__paytmEqDict = {}
             self.__pushbullet = None
             self.__google = None
 
@@ -96,7 +95,7 @@ class paytmTradingIdeas():
         time.sleep(1)
 
 
-    def __getWebElement(self, xpath, check, singular=True):
+    def __getWebElement(self, xpath, check, singular=True, time2sleep=5):
         nextStep = False
         attempts = 0
         element = None
@@ -116,7 +115,7 @@ class paytmTradingIdeas():
                 elif check == 'CLICKABLE':
                     element = WebDriverWait(self.__browser, 5).until(EC.element_to_be_clickable((By.XPATH, xpath)))
                     element.click()
-                    time.sleep(5)
+                    time.sleep(time2sleep)
                 else:
                     assert(False)
                 nextStep = True
@@ -135,7 +134,7 @@ class paytmTradingIdeas():
                 passcode = os.environ.get('paytm_passcode', '')
                 for i in range(len(passcode)):
                     passcodeIn[i].send_keys(int(passcode[i]))
-        time.sleep(5)            
+                time.sleep(5)            
 
 
     def scrapeIdeas(self):
@@ -155,7 +154,8 @@ class paytmTradingIdeas():
             self.__browseTradingIdeas()
         else:
             self.__browser.refresh()
-        self.__getWebElement("//*[@id='mainApp']/div/div[1]/div[2]/div/div[2]/span", 'CLICKABLE')
+            time.sleep(5)
+        self.__setEquityFilters()
 
 
     def __loginPaytm(self):
@@ -189,16 +189,17 @@ class paytmTradingIdeas():
 
     def __setEquityFilters(self):
         # Click Equity
-        self.__getWebElement("//*[@id='newroot']/div/div/div[4]/div[2]/div/div[2]/button", 'CLICKABLE')
+        self.__getWebElement("//*[@id='mainApp']/div/div[1]/div[2]/div/div[2]/span", 'CLICKABLE')
         # Filter on created time
-        self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[1]/div[1]/div", 'CLICKABLE')
-        self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[1]/div[3]/div/div/div/div/div/div/div[2]/div/div[2]", 'CLICKABLE')
+        self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[1]/div[1]/div", 'CLICKABLE', time2sleep=1)
+        self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[1]/div[3]/div/div/div/div/div/div/div[2]/div/div[2]", 'CLICKABLE', time2sleep=1)
         # Enable viewing both open and close recs
-        self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[2]/div[1]/div", 'CLICKABLE')
-        self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[2]/div[3]/div/div/div/div/div/div/div[2]/div[1]/div[1]/div/div/div[2]/div[1]", 'CLICKABLE')
-        self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[2]/div[3]/div/div/div/div/div/div/div[2]/div[1]/div[2]/div/div/div[2]/div[1]", 'CLICKABLE')
-        # Click on Equity again
-        self.__getWebElement("//*[@id='newroot']/div/div/div[4]/div[2]/div/div[2]/button", 'CLICKABLE')
+        self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[2]/div[1]/div", 'CLICKABLE', time2sleep=1)
+        self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[2]/div[3]/div/div/div/div/div/div/div[2]/div[1]/div[1]/div/div/div[2]/div[1]", 'CLICKABLE', time2sleep=1)
+        self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[2]/div[3]/div/div/div/div/div/div/div[2]/div[1]/div[2]/div/div/div[2]/div[1]", 'CLICKABLE', time2sleep=1)
+        # Click the body to remove the banner
+        self.__getWebElement("/html/body", 'CLICKABLE')
+
 
     def __browseTradingIdeas(self):
         self.__browser.get(self.__config['PAYTM']['PAYTM_TRADING_IDEA_URL'])
@@ -207,18 +208,20 @@ class paytmTradingIdeas():
         # Check if the trading ideas is live banner is being shown
         tradingIdeasIsLive = self.__getWebElement("//*[@id='newroot']/div/div/div[6]/div[2]/div/div[3]/div[1]", 'PRESENCE')
         if tradingIdeasIsLive != None:
-            clickBody = body = self._paytmTradingIdeas__getWebElement("/html/body", 'PRESENCE')
-            clickBody.click()
+            # Click the body to remove the banner
+            self.__getWebElement("/html/body", 'CLICKABLE')
+        self.__getWebElement("//*[@id='newroot']/div/div/div[4]/div[2]/div/div[2]/button", 'CLICKABLE')
 
 
     def browsePaytm(self):        
         self.__browser.get(self.__config['PAYTM']['PAYTM_REC_URL'])
         if self.__google != None:
+            if self.__pushbullet != None:
+                    self.__pushbullet.pushNote(self.__pushbulletDev[0]['iden'], "TRADING", "Login into Paytm Trading ideas on startup")              
             self.__loginPaytm()
             self.__browseTradingIdeas()
         else:
             input("Wait for the user to login")
-        self.__setEquityFilters()
         
 
     def closeBrowser(self):  
@@ -248,56 +251,21 @@ class paytmTradingIdeas():
         return status, rowDict['SECURITY_ID'],  rowDict['MKT_SYMBOL'], rowDict['MKT']
     
 
-    def __suggestInvPeriod(self, strategy, iciciSymbol, recDate):
-        invPeriod = ''
-        if strategy == 'MARGIN':
-            invPeriod  = '0 DAYS'
-        elif strategy == 'OPTIONS':
-            spliticiciSymbol = iciciSymbol.split('-')
-            expiryDate = spliticiciSymbol[1]+'-'+spliticiciSymbol[2]+'-'+spliticiciSymbol[3]
-            recDate    = datetime.datetime.strptime(recDate, "%d-%b-%Y")
-            expDate    = datetime.datetime.strptime(expiryDate, "%d-%b-%Y")
-            invPeriod  = (expDate - recDate).days
-            invPeriod  = str(invPeriod) + ' ' + 'DAYS*'
-        else:
-            invDays = invMonths = 0
-            if strategy == 'MOMENTUM PICK':
-                invPeriod  = '14 DAYS*'
-                invDays    = 14
-            elif strategy == 'QUANT PICKS':
-                invPeriod  = '3 MONTHS*'
-                invMonths  = 3
-            elif strategy == 'GLADIATOR STOCKS':
-                invPeriod  = '3 MONTHS*'
-                invMonths  = 3
-            else:
-                invPeriod  = '14 DAYS*'
-                invDays    = 14
-                self.__logger.error("Handle suggestion of investment period for this strategy %s", strategy)
-            expDate = datetime.datetime.strftime(datetime.datetime.strptime(recDate, '%d-%b-%Y') + relativedelta(days=invDays, months=invMonths), '%d-%b-%Y')
-        return invPeriod, expDate
-
-
-    def isVisible(self, source, iciciSymbol, strategy, buySell):
+    def isVisible(self, stockName, strategy):
         visible = False
-        if source == 'iCLICK-2-GAIN':
-            key = (iciciSymbol, strategy, buySell)
-            if key in self.__iclick2GainDict:
-                visible = self.__iclick2GainDict[key]['VISIBLE'] == 'VISIBLE'
-        else:
-            key = (iciciSymbol, strategy)
-            if key in self.__iclick2InvestDict:
-                visible = self.__iclick2InvestDict[key]['VISIBLE'] == 'VISIBLE'
+        key = (stockName, strategy)
+        if key in self.__paytmEqDict:
+            visible = True
         return visible
 
 
     def prepareRecDict(self, rowDict):
-        mandatoryKeys = ['STOCK', 'SOURCE', 'MKT_SYMBOL', 'SECURITY_ID', 'ICICI_SYMBOL', 'STRATEGY', 'BUY_SELL', 'REC_DATE', 'REC_STATUS', 'EXP_DATE', 'VISIBLE']
+        mandatoryKeys = ['STOCK', 'SOURCE', 'MKT_SYMBOL', 'SECURITY_ID', 'STRATEGY', 'BUY_SELL', 'REC_DATE', 'REC_STATUS', 'EXP_DATE', 'VISIBLE', 'MKT']
         mandatoryPriceKeys = ['LOW_REC_PRICE', 'HIGH_REC_PRICE', 'TARGET', 'STOP_LOSS']
         mandatoryDervKeys = ['LOT_SIZE']
         mandatoryLevKeys = ['REC_TIME']
         
-        importantKeys = ['INV_PERIOD', 'MKT']
+        importantKeys = ['INV_PERIOD']
         priceKeys = ['CMP', 'PART_PROFIT_PRICE', 'FINAL_PROFIT_PRICE', 'EXIT_PRICE']
         
         otherLevkeys = ['PART_PROFIT_PERC', 'UPDATE_ACTION_1', 'UPDATE_TIME_1', 'UPDATE_ACTION_2', 'UPDATE_TIME_2']
@@ -322,8 +290,7 @@ class paytmTradingIdeas():
                 self.__logger.critical("Mandatory key %s missing. Sending empty dict", key)
                 return {}
             elif key in importantKeys:
-                if key == 'INV_PERIOD':
-                    recDict['INV_PERIOD'], _ = self.__suggestInvPeriod(rowDict['STRATEGY'], rowDict['ICICI_SYMBOL'], rowDict['REC_DATE'])
+                recDict['INV_PERIOD'] = '12 MONTHS'
             elif key in priceKeys:
                 recDict[key] = 0
             elif key in otherNonLevkeys:
@@ -341,6 +308,7 @@ class paytmTradingIdeas():
         status = False
         allAnalysts = ['LOTUS FUNDS', 'MANISH SHAH', 'MADHU BANSAL', 'KAVAN PATEL', 'KUSH BOHRA', 'DHWANI PATEL' , 'CLOVEK WEALTH', 'ABHIKUMAR PATEL']
         analystToInvest = ['LOTUS FUNDS', 'CLOVEK WEALTH']
+        #analystToInvest = allAnalysts
 
         if product == 'EQUITY':
             if analyst.upper() in analystToInvest:
@@ -360,29 +328,47 @@ class paytmTradingIdeas():
         if self.analystToInvest(analyst):
             # Get the stock name
             stockName = tblRow.find_element_by_class_name("nGNYx").text
-            # Find the securityID, mktSymbol etc... 
-            status, securityID, mktSymbol, mkt = self.mapPaytmStockToMktSymbol(stockName)
-            # If found, process remaining keys required in the dictionary
-            if status:
-                rowDict = {}
-                rowDict['STOCK'] = stockName
-                rowDict['SECURITY_ID'] = securityID
-                rowDict['MKT_SYMBOL'] = mktSymbol
-                rowDict['MKT'] = mkt
-                rowDict['STRATEGY'] = tblRow.find_element_by_class_name("AftEd").text
-                rowDict['STRATEGY'] = analyst + '-' + rowDict['STRATEGY']
-                rowDict['INV_PERIOD'] = '12 MONTHS'
-                rowDict['BUY_SELL'] = tblRow.find_element_by_class_name("AsZN3").text
-                rowDict['CMP'] = tblRow.find_element_by_class_name("YujWg").text
-                rowDict['CMP'] = re.sub(r'\n.*$', '', rowDict['CMP'])
-                rowDict['LOW_REC_PRICE'] = rowDict['HIGH_REC_PRICE'] = tblRow.find_element_by_class_name("x3qrI").text
-                dateAndTime = tblRow.find_element_by_class_name("c31Md").text
-                rowDict['REC_DATE'] = dateAndTime.split(' ')[0]
-                rowDict['REC_TIME'] = dateAndTime.split(' ')[1]
-                rowDict['TARGET'] = tblRow.find_element_by_class_name("dZwGK").text
-                rowDict['STOP_LOSS'] = tblRow.find_element_by_class_name("Y7pkW").text
-                rowDict['STATUS'] = tblRow.find_element_by_class_name("LvNsX").text
-                rowDict['SOURCE'] = 'PAYTM'
+            footer = tblRow.find_elements_by_class_name("H7Sdk")
+            strategy = footer[2].text
+            key = (stockName, analyst + '-' + strategy)
+            if key not in self.__paytmEqDict:
+                # Find the securityID, mktSymbol etc... 
+                status, securityID, mktSymbol, mkt = self.mapPaytmStockToMktSymbol(stockName)
+                # If found, process remaining keys required in the dictionary
+                if status:
+                    rowDict = {}
+                    rowDict['STOCK'] = stockName
+                    rowDict['SECURITY_ID'] = securityID
+                    rowDict['MKT_SYMBOL'] = mktSymbol
+                    rowDict['MKT'] = mkt
+                    rowDict['STRATEGY'] = analyst + '-' + strategy
+                    rowDict['EXP_DATE'] = re.sub('IdeaExpiry: ', '', footer[1].text, flags=re.IGNORECASE)
+                    rowDict['EXP_DATE'] = datetime.datetime.strftime(datetime.datetime.strptime(rowDict['EXP_DATE'], '%Y-%m-%d'), '%d-%b-%Y')
+                    rowDict['INV_PERIOD'] = '12 MONTHS'
+                    rowDict['REC_STATUS'] = 'CLOSE' if tblRow.find_element_by_xpath("div[2]/div[1]/div[8]/span").text.upper() == 'CLOSED' else 'OPEN'
+                    if rowDict['REC_STATUS'] != 'CLOSE':
+                        rowDict['BUY_SELL'] = tblRow.find_element_by_class_name("AsZN3").text
+                    else:
+                        # TBD: Not sure about this. Should we hard-code to BUY?
+                        rowDict['BUY_SELL'] = 'BUY'
+                    rowDict['CMP'] = tblRow.find_element_by_class_name("YujWg").text
+                    rowDict['CMP'] = self.__convPriceToFloat(re.sub(r'\n.*$', '', rowDict['CMP']))
+                    rowDict['LOW_REC_PRICE'] = rowDict['HIGH_REC_PRICE'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("x3qrI").text)
+                    dateAndTime = tblRow.find_element_by_class_name("c31Md").text
+                    rowDict['REC_DATE'] = dateAndTime.split(' ')[0]
+                    rowDict['REC_DATE'] = datetime.datetime.strftime(datetime.datetime.strptime(rowDict['REC_DATE'], '%Y-%m-%d'), '%d-%b-%Y')
+                    rowDict['REC_TIME'] = dateAndTime.split(' ')[1]
+                    rowDict['TARGET'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("dZwGK").text)
+                    rowDict['STOP_LOSS'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("Y7pkW").text)
+                    rowDict['SOURCE'] = 'PAYTM'
+                    self.__paytmEqDict[key] =  {'DICT': rowDict, 'VISIBLE': 'VISIBLE'}
+            else:
+                self.__paytmEqDict[key]['VISIBLE'] = 'VISIBLE'
+                rowDict = self.__paytmEqDict[key]['DICT']
+                rowDict['HIGH_REC_PRICE'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("x3qrI").text)
+                rowDict['TARGET'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("dZwGK").text)
+                rowDict['STOP_LOSS'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("Y7pkW").text)
+                rowDict['REC_STATUS'] = 'CLOSE' if tblRow.find_element_by_xpath("div[2]/div[1]/div[8]/span").text.upper() == 'CLOSED' else 'OPEN'
 
         return rowDict
 
@@ -398,6 +384,6 @@ class paytmTradingIdeas():
                         yield rowDict
                 break
             except Exception as e:
-                self.__logger.error('getNextPaytmTblRow: %s', rowDict)
+                self.__logger.error('getNextPaytmTblRow: %s', e)
                 self.scrapeIdeas()
                 parseAttempt += 1
