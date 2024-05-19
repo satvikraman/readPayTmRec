@@ -47,8 +47,10 @@ class paytmTradingIdeas():
             self.__logger = logging.getLogger(__name__)
             self.__logger.setLevel(level)
             self.__paytmEqDict = {}
+            self.__paytmDervDict = {}
             self.__pushbullet = None
             self.__google = None
+            self.__today = datetime.datetime.strftime(datetime.datetime.today(), "%d-%b-%Y")
 
             # Connect w/ the browser driver
             self.__browserEngine = self.__config['DEFAULT']['BROWSER']
@@ -137,11 +139,18 @@ class paytmTradingIdeas():
                 time.sleep(5)            
 
 
+    def setProduct(self, product):
+        self.__product = product
+
+
     def scrapeIdeas(self):
         scrapeAttempt = 0
         while scrapeAttempt < 3: 
             try:
-                self.__paytmTblRows = self.__getWebElement("//*[@id='mainApp']/div/div[3]/div[2]/div", 'VISIBILITY', singular=False) 
+                if self.__product == 'EQUITY':
+                    self.__paytmEqTblRows = self.__getWebElement("//*[@id='mainApp']/div/div[3]/div[2]/div", 'VISIBILITY', singular=False) 
+                else:
+                    self.__paytmDervTblRows = self.__getWebElement("//*[@id='mainApp']/div/div[3]/div[2]/div", 'VISIBILITY', singular=False) 
                 self.__enterPasscode()
                 break
             except Exception as err:
@@ -155,7 +164,7 @@ class paytmTradingIdeas():
         else:
             self.__browser.refresh()
             time.sleep(5)
-        self.__setEquityFilters()
+        self.__setFilters()
 
 
     def __loginPaytm(self):
@@ -187,9 +196,13 @@ class paytmTradingIdeas():
         self.__enterPasscode()            
 
 
-    def __setEquityFilters(self):
-        # Click Equity
-        self.__getWebElement("//*[@id='mainApp']/div/div[1]/div[2]/div/div[2]/span", 'CLICKABLE')
+    def __setFilters(self):
+        if self.__product == 'EQUITY':
+            # Click Equity
+            self.__getWebElement("//*[@id='mainApp']/div/div[1]/div[2]/div/div[2]/span", 'CLICKABLE')
+        else:
+            # Click Derivatives
+            self.__getWebElement("//*[@id='mainApp']/div/div[1]/div[2]/div/div[1]/span", 'CLICKABLE')
         # Filter on created time
         self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[1]/div[1]/div", 'CLICKABLE', time2sleep=1)
         self.__getWebElement("//*[@id='mainApp']/div/div[2]/div/div[2]/div[1]/div[3]/div/div/div/div/div/div/div[2]/div/div[2]", 'CLICKABLE', time2sleep=1)
@@ -228,27 +241,35 @@ class paytmTradingIdeas():
         self.__browser.quit()
 
 
-    def mapPaytmStockToMktSymbol(self, stkName, strategy="EQ"):
+    def mapPaytmStockToMktSymbol(self, stkName):
         status = False
         rowDict = {'SECURITY_ID': '', 'MKT': '', 'MKT_SYMBOL': ''}
-        # Equity investment. Could be intraday as well
-        datasets = [[self.__config['PAYTM']['NSE_DATASET'], 'NSE', ['security_id', 'symbol', 'name', 'exchange', 'series']]]
 
-        for dataset in datasets:
-            with(open(dataset[0], 'r')) as paytmcsv:
-                paytmReader = csv.DictReader(paytmcsv)
+        if self.__product == 'EQUITY':
+            # Equity investment. Could be intraday as well
+            url = self.__config['PAYTM']['PAYTM_EQUITY_DATASET']
+        else:
+            url = self.__config['PAYTM']['PAYTM_OPTION_DATASET'] if re.match(r'.*CALL$|.*PUT$', stkName) else self.__config['PAYTM']['PAYTM_FUTURE_DATASET']
+                
+        paytmDataset = self.__config['PAYTM']['DATASET_PATH'] + re.sub(r'^.*/', '', url)
+        col = {'SECURITY_ID': 'security_id', 'MKT_SYMBOL': 'symbol', 'LOT': 'lot_size', 'STOCK': 'name', 'MKT': 'exchange', 'SERIES': 'series'}
+
+        with(open(paytmDataset, 'r')) as paytmcsv:
+            paytmReader = csv.DictReader(paytmcsv)
+            for market in ['NSE', 'BSE']:
                 for paytmRow in paytmReader:
-                    if paytmRow[dataset[2][2]].upper() == stkName.upper() and paytmRow[dataset[2][3]].upper() == "NSE" and paytmRow[dataset[2][4]].upper() == "EQ" :
+                    if paytmRow[col['STOCK']].upper() == stkName.upper() and paytmRow[col['MKT']].upper() == market:
+                        rowDict['SECURITY_ID'] = paytmRow[col['SECURITY_ID']]
+                        rowDict['MKT_SYMBOL'] = paytmRow[col['MKT_SYMBOL']]
+                        rowDict['LOT'] = paytmRow[col['LOT']]
+                        rowDict['MKT'] = market
                         status = True
-                        rowDict['SECURITY_ID'] = paytmRow[dataset[2][0]]
-                        rowDict['MKT'] = 'NSE'
-                        rowDict['MKT_SYMBOL'] = paytmRow[dataset[2][1]]
                         break
-            if status:
-                break
+                if status:
+                    break
 
         self.__logger.debug('Generated dictionary %s', rowDict)
-        return status, rowDict['SECURITY_ID'],  rowDict['MKT_SYMBOL'], rowDict['MKT']
+        return status, rowDict['SECURITY_ID'],  rowDict['MKT_SYMBOL'], rowDict['MKT'], rowDict['LOT']
     
 
     def isVisible(self, stockName, strategy):
@@ -308,7 +329,7 @@ class paytmTradingIdeas():
         status = False
         allAnalysts = ['LOTUS FUNDS', 'MANISH SHAH', 'MADHU BANSAL', 'KAVAN PATEL', 'KUSH BOHRA', 'DHWANI PATEL' , 'CLOVEK WEALTH', 'ABHIKUMAR PATEL']
         analystToInvest = ['LOTUS FUNDS', 'CLOVEK WEALTH']
-        #analystToInvest = allAnalysts
+        analystToInvest = allAnalysts
 
         if product == 'EQUITY':
             if analyst.upper() in analystToInvest:
@@ -319,7 +340,7 @@ class paytmTradingIdeas():
 
     def __formatPaytmTblRowToDict(self, tblRow):
         rowDict = None
-        self.__logger.debug('==== Format Table Row To Dictionary ====')
+        ideaDict = self.__paytmEqDict if self.__product == 'EQUITY' else self.__paytmDervDict
         
         # Find the strategy
         analyst = tblRow.find_element_by_class_name("o3dmU").text
@@ -331,9 +352,9 @@ class paytmTradingIdeas():
             footer = tblRow.find_elements_by_class_name("H7Sdk")
             strategy = footer[2].text
             key = (stockName, analyst + '-' + strategy)
-            if key not in self.__paytmEqDict:
+            if key not in ideaDict:
                 # Find the securityID, mktSymbol etc... 
-                status, securityID, mktSymbol, mkt = self.mapPaytmStockToMktSymbol(stockName)
+                status, securityID, mktSymbol, mkt, lot = self.mapPaytmStockToMktSymbol(stockName)
                 # If found, process remaining keys required in the dictionary
                 if status:
                     rowDict = {}
@@ -341,6 +362,7 @@ class paytmTradingIdeas():
                     rowDict['SECURITY_ID'] = securityID
                     rowDict['MKT_SYMBOL'] = mktSymbol
                     rowDict['MKT'] = mkt
+                    rowDict['LOT'] = lot
                     rowDict['STRATEGY'] = analyst + '-' + strategy
                     rowDict['EXP_DATE'] = re.sub('IdeaExpiry: ', '', footer[1].text, flags=re.IGNORECASE)
                     rowDict['EXP_DATE'] = datetime.datetime.strftime(datetime.datetime.strptime(rowDict['EXP_DATE'], '%Y-%m-%d'), '%d-%b-%Y')
@@ -350,7 +372,11 @@ class paytmTradingIdeas():
                         rowDict['BUY_SELL'] = tblRow.find_element_by_class_name("AsZN3").text
                     else:
                         # TBD: Not sure about this. Should we hard-code to BUY?
-                        rowDict['BUY_SELL'] = 'BUY'
+                        imgSrc = tblRow.find_element_by_xpath("div[2]/div[1]/div[1]/div[1]/img").get_attribute("src")
+                        rowDict['BUY_SELL'] = 'BUY' if '29b6ed06.svg' in imgSrc else 'SELL'
+                        rowDict['REC_CLOSE_PRICE'] = re.sub(r'Exit at :\s+', '', tblRow.find_element_by_class_name("akHri").text)
+                        rowDict['REC_CLOSE_DATE'] = self.__today
+                            
                     rowDict['CMP'] = tblRow.find_element_by_class_name("YujWg").text
                     rowDict['CMP'] = self.__convPriceToFloat(re.sub(r'\n.*$', '', rowDict['CMP']))
                     rowDict['LOW_REC_PRICE'] = rowDict['HIGH_REC_PRICE'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("x3qrI").text)
@@ -360,11 +386,11 @@ class paytmTradingIdeas():
                     rowDict['REC_TIME'] = dateAndTime.split(' ')[1]
                     rowDict['TARGET'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("dZwGK").text)
                     rowDict['STOP_LOSS'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("Y7pkW").text)
-                    rowDict['SOURCE'] = 'PAYTM'
-                    self.__paytmEqDict[key] =  {'DICT': rowDict, 'VISIBLE': 'VISIBLE'}
+                    rowDict['SOURCE'] = 'PAYTM-EQ' if self.__product == 'EQUITY' else 'PAYTM-FnO'
+                    ideaDict[key] =  {'DICT': rowDict, 'VISIBLE': 'VISIBLE'}
             else:
-                self.__paytmEqDict[key]['VISIBLE'] = 'VISIBLE'
-                rowDict = self.__paytmEqDict[key]['DICT']
+                ideaDict[key]['VISIBLE'] = 'VISIBLE'
+                rowDict = ideaDict[key]['DICT']
                 rowDict['HIGH_REC_PRICE'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("x3qrI").text)
                 rowDict['TARGET'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("dZwGK").text)
                 rowDict['STOP_LOSS'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("Y7pkW").text)
@@ -377,7 +403,7 @@ class paytmTradingIdeas():
         parseAttempt = 0
         while parseAttempt < 3:
             try:
-                for tblRow in self.__paytmTblRows:
+                for tblRow in self.__paytmEqTblRows if self.__product == 'EQUITY' else self.__paytmDervTblRows:
                     rowDict = self.__formatPaytmTblRowToDict(tblRow)
                     if rowDict != None:
                         self.__logger.debug('Generated dictionary %s', rowDict)

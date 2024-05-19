@@ -49,6 +49,11 @@ class app():
             self.__backupDb(dbInv)                
             self.__persistenceInv = persistence(configFile, dbInv)
 
+            if dbFnO == None:
+                dbFnO = self.__config['DATABASE']['DB_FNO']
+            self.__backupDb(dbFnO)                
+            self.__persistenceFnO = persistence(configFile, dbFnO)
+
             self.__paytm = paytmTradingIdeas(configFile)
 
             self.__numRetries = int(self.__config['APP']['NUM_RETRIES'])
@@ -59,13 +64,15 @@ class app():
             paytm_dataset_valid_until_date = os.environ.get('paytm_dataset_valid_until_date', '')
             today = datetime.datetime.today().strftime("%d-%b-%Y").upper()
             if(paytm_dataset_valid_until_date.upper() != today):
-                paytmDatasetPath = "./dataset/"
-                paytmDataset = paytmDatasetPath + "equity_security_master.csv"
                 try:
-                    urllib.request.urlretrieve(self.__config['PAYTM']['PAYTM_DATASET'], paytmDataset)
-                    dotenv.set_key('./.env', "paytm_dataset_valid_until_date", today)
+                    for dataset in ['PAYTM_EQUITY_DATASET', 'PAYTM_FUTURE_DATASET', 'PAYTM_OPTION_DATASET']:
+                        url = self.__config['PAYTM'][dataset]
+                        paytmDataset = self.__config['PAYTM']['DATASET_PATH'] + re.sub(r'^.*/', '', url)
+                        urllib.request.urlretrieve(url, paytmDataset)
                 except Exception as e:
                     self.__logger.critical(e)
+                finally:
+                    dotenv.set_key('./.env', "paytm_dataset_valid_until_date", today)
 
 
     def __backupDb(self, db):
@@ -77,6 +84,8 @@ class app():
 
 
     def __send2PayTm(self, endPoint, recDict):
+        return True
+    
         retries = self.__numRetries
         status = False
 
@@ -137,9 +146,9 @@ class app():
         return status, dbDict
 
 
-    def __updateNonLeverageRecStatus(self, rowDict):
+    def __updateNonLeverageRecStatus(self, rowDict, product):
         rowDict['VISIBLE'] = 'VISIBLE'
-        persistence = self.__persistenceInv
+        persistence = self.__persistenceInv if product == 'EQUITY' else self.__persistenceFnO
 
         # Find open recommendations matching the condition in DB
         self.__logger.debug("updateRecStatus: Finding in DB nseSym=%s, strategy=%s, date=%s, time=%s, recStatus=%s", 
@@ -173,10 +182,11 @@ class app():
                 #else: Nothing to be done
 
 
-    def __updateMismatchedVisibilityNonLeverageRecs(self):
+    def __updateMismatchedVisibilityRecs(self, product):
         visibilityDict = {'SOURCE': 'PAYTM', 'VISIBLE': []}
+        persistence = self.__persistenceInv if product == 'EQUITY' else self.__persistenceFnO
         # Find all strategyToCheck (MARGIN|OPTIONS|FUTURE) recommendations in DB that are not closed
-        dbDicts = self.__persistenceInv.getDb([['REC_STATUS', '!CLOSE']])
+        dbDicts = persistence.getDb([['REC_STATUS', '!CLOSE']])
 
         # If they are not found in the recommendations on the web page --> close them 
         for dbDict in dbDicts:
@@ -188,22 +198,22 @@ class app():
                 visibilityDict['VISIBLE'].append(val)
                 if (dbDict['VISIBLE'] != 'VISIBLE'):
                     dbDict['VISIBLE'] = 'VISIBLE'
-                    self.__persistenceInv.updateDb(dbDict, [['MKT_SYMBOL', dbDict['MKT_SYMBOL']], ['STRATEGY', dbDict['STRATEGY']], ['REC_DATE', dbDict['REC_DATE']], ['REC_TIME', dbDict['REC_TIME']]])
+                    persistence.updateDb(dbDict, [['MKT_SYMBOL', dbDict['MKT_SYMBOL']], ['STRATEGY', dbDict['STRATEGY']], ['REC_DATE', dbDict['REC_DATE']], ['REC_TIME', dbDict['REC_TIME']]])
                     self.__logger.info("Changing rec's visibility to visible => %s", dbDict)
             elif (dbDict['VISIBLE'] == 'VISIBLE') or dbDict['REC_STATUS'] != 'CLOSE':
                 dbDict['VISIBLE'] = 'HIDDEN'
                 dbDict['REC_STATUS'] = 'CLOSE'
-                self.__persistenceInv.updateDb(dbDict, [['MKT_SYMBOL', dbDict['MKT_SYMBOL']], ['STRATEGY', dbDict['STRATEGY']], ['REC_DATE', dbDict['REC_DATE']], ['REC_TIME', dbDict['REC_TIME']]])
+                persistence.updateDb(dbDict, [['MKT_SYMBOL', dbDict['MKT_SYMBOL']], ['STRATEGY', dbDict['STRATEGY']], ['REC_DATE', dbDict['REC_DATE']], ['REC_TIME', dbDict['REC_TIME']]])
                 self.__logger.info("Changing the visibility to hidden and closing the rec => %s", dbDict)
 
         self.__send2PayTm('VISIBILITY', visibilityDict)
         self.__logger.info('Visibility %s', visibilityDict)
 
 
-    def __sendNonAckedRecsFromDb(self):
+    def __sendNonAckedRecsFromDb(self, product):
         # Find open recommendations matching the condition in DB
         self.__logger.debug("__sendNonAckedRecs: Finding in DB ACK=False")
-        persistence = self.__persistenceInv
+        persistence = self.__persistenceInv if product == 'EQUITY' else self.__persistenceFnO
 
         dbDicts = persistence.getDb([['ACK', '!ACK']])
         self.__logger.debug("Find results: dbDict = %s", dbDicts)
@@ -216,18 +226,21 @@ class app():
             self.__logger.info('NACK Recommendation %s', recDict)
 
     def runPeriodicChecks(self):
-        # Send all recommendations in DB that haven't be ACK'ed
-        self.__sendNonAckedRecsFromDb()
-
-        # Refresh webpage and find new ideas        
-        self.__paytm.refreshIdeas()
-        self.__paytm.scrapeIdeas()
-        for invRecDict in self.__paytm.getNextPaytmTblRow():
-            self.__updateNonLeverageRecStatus(invRecDict)
+        # Refresh webpage and find new ideas
+        for product in ['EQUITY', 'DERIVATIVES']:            
+            self.__paytm.setProduct(product)
+            # Send all recommendations in DB that haven't be ACK'ed
+            self.__sendNonAckedRecsFromDb(product)
+            self.__paytm.refreshIdeas()
+            self.__paytm.scrapeIdeas()
+            for invRecDict in self.__paytm.getNextPaytmTblRow():
+                self.__updateNonLeverageRecStatus(invRecDict, product)
         
     def runPostMarketCloseChecks(self):
         self.__logger.info("Checking for mismatched visibility")
-        self.__updateMismatchedVisibilityNonLeverageRecs()
+        for product in ['EQUITY', 'DERIVATIVES']:
+            self.__paytm.setProduct(product)
+            self.__updateMismatchedVisibilityRecs(product)
 
 
     def openPaytmSession(self):
