@@ -62,8 +62,8 @@ class app():
             # Download the latest Paytm dataset once every day
             dotenv.load_dotenv('.env', override=True)
             paytm_dataset_valid_until_date = os.environ.get('paytm_dataset_valid_until_date', '')
-            today = datetime.datetime.today().strftime("%d-%b-%Y").upper()
-            if(paytm_dataset_valid_until_date.upper() != today):
+            self.__today = datetime.datetime.today().strftime("%d-%b-%Y")
+            if(paytm_dataset_valid_until_date.upper() != self.__today.upper()):
                 try:
                     for dataset in ['PAYTM_EQUITY_DATASET', 'PAYTM_FUTURE_DATASET', 'PAYTM_OPTION_DATASET']:
                         url = self.__config['PAYTM'][dataset]
@@ -72,7 +72,7 @@ class app():
                 except Exception as e:
                     self.__logger.critical(e)
                 finally:
-                    dotenv.set_key('./.env', "paytm_dataset_valid_until_date", today)
+                    dotenv.set_key('./.env', "paytm_dataset_valid_until_date", self.__today)
 
 
     def __backupDb(self, db):
@@ -84,11 +84,11 @@ class app():
 
 
     def __send2PayTm(self, endPoint, recDict):
-        return True
-    
+        if recDict == None:
+            return True
+        
         retries = self.__numRetries
         status = False
-
         while not status and retries >= 0:
             try:
                 url = self.__paytmBaseURL
@@ -113,40 +113,20 @@ class app():
         return status
 
 
-    def __computeExpDate(self, recDict, dbDict):
-            status = True
-            invDays = invMonths = 0
-            invPeriod = recDict['INV_PERIOD']
-            if '*' in invPeriod:
-                invPeriod = dbDict['INV_PERIOD'] if 'INV_PERIOD' in dbDict else invPeriod
-
-            if 'MONTH'.lower() in invPeriod.lower():
-                invMonths = re.match(r'\d+', invPeriod)
-                invMonths = int(invMonths.group(0))
-            elif 'DAY'.lower() in invPeriod.lower():
-                invDays = re.match(r'\d+', invPeriod)
-                invDays = int(invDays.group(0))
-
-            expDate = datetime.datetime.strftime(datetime.datetime.strptime(dbDict['REC_DATE'], '%Y-%m-%d') + relativedelta(days=invDays, months=invMonths), '%Y-%m-%d')
-            return status, invPeriod, expDate
-
-
     def __hasChanged(self, dbDict, rowDict):
         status = False
         if rowDict['REC_STATUS'] == 'CLOSE' and dbDict['REC_STATUS'] != 'CLOSE':
             status = True
-            dbDict['REC_STATUS'] = 'CLOSE'
 
         keysToCheck = ['TARGET', 'STOP_LOSS', 'LOW_REC_PRICE', 'HIGH_REC_PRICE']
         for keyToCheck in keysToCheck:
             if rowDict[keyToCheck] != dbDict[keyToCheck]:
                 status = True
-                dbDict[keyToCheck] = rowDict[keyToCheck]
 
-        return status, dbDict
+        return status
 
 
-    def __updateNonLeverageRecStatus(self, rowDict, product):
+    def __updateRecStatus(self, rowDict, product):
         rowDict['VISIBLE'] = 'VISIBLE'
         persistence = self.__persistenceInv if product == 'EQUITY' else self.__persistenceFnO
 
@@ -159,26 +139,26 @@ class app():
         # If no recommendation found in DB and if the current recommendation is not close, then
         # Insert the recommendation in DB
         if not isInDb:
-            if(rowDict['REC_STATUS'] != 'CLOSE'):
+            if (rowDict['REC_STATUS'] != 'CLOSE'):
                 recDict = self.__paytm.prepareRecDict(rowDict)                                
                 status = self.__send2PayTm('NEW_REC', recDict)
                 rowDict['ACK'] = 'ACK' if status else 'NACK'
-                res = persistence.insertDb(rowDict, [['MKT_SYMBOL', rowDict['MKT_SYMBOL']], ['STRATEGY', rowDict['STRATEGY']], ['REC_DATE', rowDict['REC_DATE']], ['REC_TIME', rowDict['REC_TIME']]])
-                self.__logger.info('New Recommendation %s', recDict)
+                persistence.insertDb(rowDict, [['MKT_SYMBOL', rowDict['MKT_SYMBOL']], ['STRATEGY', rowDict['STRATEGY']], ['REC_DATE', rowDict['REC_DATE']], ['REC_TIME', rowDict['REC_TIME']]])
+                self.__logger.info('New Recommendation %s', rowDict)
             else:
                 rowDict['ACK'] = 'ACK'
                 res = persistence.insertDb(rowDict, [['MKT_SYMBOL', rowDict['MKT_SYMBOL']], ['STRATEGY', rowDict['STRATEGY']], ['REC_DATE', rowDict['REC_DATE']], ['REC_TIME', rowDict['REC_TIME']]])
                 self.__logger.info("Recommendation for %s is new (i.e. not in DB) but is already closed %s", rowDict['MKT_SYMBOL'], rowDict)
         elif isInDb:
                 # If the recommendation has changed then
-                isChange, dbDict = self.__hasChanged(dbDict, rowDict)
+                isChange = self.__hasChanged(dbDict, rowDict)
 
                 if isChange:
-                    recDict = self.__paytm.prepareRecDict(dbDict)
+                    recDict = self.__paytm.prepareRecDict(rowDict)
                     status = self.__send2PayTm('UPDATE_REC', recDict)
-                    dbDict['ACK'] = 'ACK' if status else 'NACK'
-                    persistence.updateDb(dbDict, [['MKT_SYMBOL', dbDict['MKT_SYMBOL']], ['STRATEGY', dbDict['STRATEGY']], ['REC_DATE', dbDict['REC_DATE']], ['REC_TIME', dbDict['REC_TIME']]])
-                    self.__logger.info('Updated Recommendation %s', recDict)
+                    rowDict['ACK'] = 'ACK' if status else 'NACK'
+                    persistence.updateDb(rowDict, [['MKT_SYMBOL', rowDict['MKT_SYMBOL']], ['STRATEGY', rowDict['STRATEGY']], ['REC_DATE', rowDict['REC_DATE']], ['REC_TIME', rowDict['REC_TIME']]])
+                    self.__logger.info('Updated Recommendation %s', rowDict)
                 #else: Nothing to be done
 
 
@@ -190,7 +170,7 @@ class app():
 
         # If they are not found in the recommendations on the web page --> close them 
         for dbDict in dbDicts:
-            visible = self.__paytm.isVisible(dbDict['STOCK'], dbDict['STRATEGY'])
+            visible = self.__paytm.isVisible(dbDict['STOCK'], dbDict['STRATEGY'], dbDict['REC_DATE'])
 
             # Close the recommendation that was not found
             if visible:
@@ -203,11 +183,15 @@ class app():
             elif (dbDict['VISIBLE'] == 'VISIBLE') or dbDict['REC_STATUS'] != 'CLOSE':
                 dbDict['VISIBLE'] = 'HIDDEN'
                 dbDict['REC_STATUS'] = 'CLOSE'
+                dbDict['REC_CLOSE_DATE'] = self.__today
+                dbDict['CLOSE_PRICE'] = dbDict['HIGH_REC_PRICE']
                 persistence.updateDb(dbDict, [['MKT_SYMBOL', dbDict['MKT_SYMBOL']], ['STRATEGY', dbDict['STRATEGY']], ['REC_DATE', dbDict['REC_DATE']], ['REC_TIME', dbDict['REC_TIME']]])
                 self.__logger.info("Changing the visibility to hidden and closing the rec => %s", dbDict)
 
-        self.__send2PayTm('VISIBILITY', visibilityDict)
-        self.__logger.info('Visibility %s', visibilityDict)
+        self.__logger.critical("Sending of visiblilityDict from PaytmTradingIdea to Paytm Broker is disabled")
+        #if len(visibilityDict['VISIBLE']) > 0:
+        #    #self.__send2PayTm('VISIBILITY', visibilityDict)
+        #    #self.__logger.info('Visibility %s', visibilityDict)
 
 
     def __sendNonAckedRecsFromDb(self, product):
@@ -223,7 +207,7 @@ class app():
             status = self.__send2PayTm('UPDATE_REC', recDict)
             dbDict['ACK'] = 'ACK' if status else 'NACK'
             persistence.updateDb(dbDict, [['MKT_SYMBOL', dbDict['MKT_SYMBOL']], ['STRATEGY', dbDict['STRATEGY']], ['REC_DATE', dbDict['REC_DATE']], ['REC_TIME', dbDict['REC_TIME']]])
-            self.__logger.info('NACK Recommendation %s', recDict)
+            self.__logger.info('NACK Recommendation %s', dbDict)
 
     def runPeriodicChecks(self):
         # Refresh webpage and find new ideas
@@ -234,7 +218,7 @@ class app():
             self.__paytm.refreshIdeas()
             self.__paytm.scrapeIdeas()
             for invRecDict in self.__paytm.getNextPaytmTblRow():
-                self.__updateNonLeverageRecStatus(invRecDict, product)
+                self.__updateRecStatus(invRecDict, product)
         
     def runPostMarketCloseChecks(self):
         self.__logger.info("Checking for mismatched visibility")

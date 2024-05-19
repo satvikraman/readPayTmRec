@@ -272,15 +272,18 @@ class paytmTradingIdeas():
         return status, rowDict['SECURITY_ID'],  rowDict['MKT_SYMBOL'], rowDict['MKT'], rowDict['LOT']
     
 
-    def isVisible(self, stockName, strategy):
+    def isVisible(self, stockName, strategy, recDate):
         visible = False
-        key = (stockName, strategy)
-        if key in self.__paytmEqDict:
+        key = (stockName, strategy, recDate)
+        if key in self.__paytmEqDict if self.__product == 'EQUITY' else self.__paytmDervDict:
             visible = True
         return visible
 
 
     def prepareRecDict(self, rowDict):
+        if not self.analystToInvest(rowDict['STRATEGY'], rowDict['SOURCE'], rowDict['BUY_SELL']):
+            return None
+        
         mandatoryKeys = ['STOCK', 'SOURCE', 'MKT_SYMBOL', 'SECURITY_ID', 'STRATEGY', 'BUY_SELL', 'REC_DATE', 'REC_STATUS', 'EXP_DATE', 'VISIBLE', 'MKT']
         mandatoryPriceKeys = ['LOW_REC_PRICE', 'HIGH_REC_PRICE', 'TARGET', 'STOP_LOSS']
         mandatoryDervKeys = ['LOT_SIZE']
@@ -325,15 +328,15 @@ class paytmTradingIdeas():
         return price
 
 
-    def analystToInvest(self, analyst, product='EQUITY', buySell='BUY'):
+    def analystToInvest(self, strategy, source, buySell):
         status = False
         allAnalysts = ['LOTUS FUNDS', 'MANISH SHAH', 'MADHU BANSAL', 'KAVAN PATEL', 'KUSH BOHRA', 'DHWANI PATEL' , 'CLOVEK WEALTH', 'ABHIKUMAR PATEL']
-        analystToInvest = ['LOTUS FUNDS', 'CLOVEK WEALTH']
-        analystToInvest = allAnalysts
+        analystToInvestEQ = []
+        analystToInvestFnO = []
 
-        if product == 'EQUITY':
-            if analyst.upper() in analystToInvest:
-                status = True
+        analyst = re.sub(r'-.*$', '', strategy)
+        if analyst.upper() in analystToInvestEQ if source == 'PAYTM-EQ' else analystToInvestFnO:
+            status = True
         
         return status
     
@@ -346,12 +349,15 @@ class paytmTradingIdeas():
         analyst = tblRow.find_element_by_class_name("o3dmU").text
         analyst = re.sub('Powered By ', '', analyst, flags=re.IGNORECASE)
         # TODO: figure out if it is intraday, short term or long term
-        if self.analystToInvest(analyst):
+
+        if True:
             # Get the stock name
             stockName = tblRow.find_element_by_class_name("nGNYx").text
             footer = tblRow.find_elements_by_class_name("H7Sdk")
             strategy = footer[2].text
-            key = (stockName, analyst + '-' + strategy)
+            dateAndTime = tblRow.find_element_by_class_name("c31Md").text
+            date = datetime.datetime.strftime(datetime.datetime.strptime(dateAndTime.split(' ')[0], '%Y-%m-%d'), '%d-%b-%Y')
+            key = (stockName, analyst + '-' + strategy, date)
             if key not in ideaDict:
                 # Find the securityID, mktSymbol etc... 
                 status, securityID, mktSymbol, mkt, lot = self.mapPaytmStockToMktSymbol(stockName)
@@ -374,15 +380,14 @@ class paytmTradingIdeas():
                         # TBD: Not sure about this. Should we hard-code to BUY?
                         imgSrc = tblRow.find_element_by_xpath("div[2]/div[1]/div[1]/div[1]/img").get_attribute("src")
                         rowDict['BUY_SELL'] = 'BUY' if '29b6ed06.svg' in imgSrc else 'SELL'
-                        rowDict['REC_CLOSE_PRICE'] = re.sub(r'Exit at :\s+', '', tblRow.find_element_by_class_name("akHri").text)
+                        rowDict['CLOSE_PRICE'] = re.sub(r'Exit at :\s+', '', tblRow.find_element_by_class_name("akHri").text)
                         rowDict['REC_CLOSE_DATE'] = self.__today
                             
                     rowDict['CMP'] = tblRow.find_element_by_class_name("YujWg").text
                     rowDict['CMP'] = self.__convPriceToFloat(re.sub(r'\n.*$', '', rowDict['CMP']))
                     rowDict['LOW_REC_PRICE'] = rowDict['HIGH_REC_PRICE'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("x3qrI").text)
-                    dateAndTime = tblRow.find_element_by_class_name("c31Md").text
-                    rowDict['REC_DATE'] = dateAndTime.split(' ')[0]
-                    rowDict['REC_DATE'] = datetime.datetime.strftime(datetime.datetime.strptime(rowDict['REC_DATE'], '%Y-%m-%d'), '%d-%b-%Y')
+                    
+                    rowDict['REC_DATE'] = date
                     rowDict['REC_TIME'] = dateAndTime.split(' ')[1]
                     rowDict['TARGET'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("dZwGK").text)
                     rowDict['STOP_LOSS'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("Y7pkW").text)
@@ -391,9 +396,18 @@ class paytmTradingIdeas():
             else:
                 ideaDict[key]['VISIBLE'] = 'VISIBLE'
                 rowDict = ideaDict[key]['DICT']
-                rowDict['HIGH_REC_PRICE'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("x3qrI").text)
-                rowDict['TARGET'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("dZwGK").text)
-                rowDict['STOP_LOSS'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("Y7pkW").text)
+                newTarget = self.__convPriceToFloat(tblRow.find_element_by_class_name("dZwGK").text)
+                if rowDict['BUY_SELL'] == 'BUY':
+                    if newTarget < rowDict['TARGET']:
+                        rowDict['LOW_REC_PRICE'] = rowDict['HIGH_REC_PRICE'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("x3qrI").text)
+                        rowDict['TARGET'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("dZwGK").text)
+                        rowDict['STOP_LOSS'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("Y7pkW").text)
+                else:
+                    if newTarget > rowDict['TARGET']:                    
+                        rowDict['LOW_REC_PRICE'] = rowDict['HIGH_REC_PRICE'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("x3qrI").text)
+                        rowDict['TARGET'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("dZwGK").text)
+                        rowDict['STOP_LOSS'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("Y7pkW").text)
+
                 rowDict['REC_STATUS'] = 'CLOSE' if tblRow.find_element_by_xpath("div[2]/div[1]/div[8]/span").text.upper() == 'CLOSED' else 'OPEN'
 
         return rowDict
