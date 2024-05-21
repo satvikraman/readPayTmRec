@@ -377,7 +377,6 @@ class paytmTradingIdeas():
                     if rowDict['REC_STATUS'] != 'CLOSE':
                         rowDict['BUY_SELL'] = tblRow.find_element_by_class_name("AsZN3").text
                     else:
-                        # TBD: Not sure about this. Should we hard-code to BUY?
                         imgSrc = tblRow.find_element_by_xpath("div[2]/div[1]/div[1]/div[1]/img").get_attribute("src")
                         rowDict['BUY_SELL'] = 'BUY' if '29b6ed06.svg' in imgSrc else 'SELL'
                         rowDict['CLOSE_PRICE'] = re.sub(r'Exit at :\s+', '', tblRow.find_element_by_class_name("akHri").text)
@@ -409,6 +408,9 @@ class paytmTradingIdeas():
                         rowDict['STOP_LOSS'] = self.__convPriceToFloat(tblRow.find_element_by_class_name("Y7pkW").text)
 
                 rowDict['REC_STATUS'] = 'CLOSE' if tblRow.find_element_by_xpath("div[2]/div[1]/div[8]/span").text.upper() == 'CLOSED' else 'OPEN'
+                if rowDict['REC_STATUS'] == 'CLOSE':
+                    rowDict['CLOSE_PRICE'] = re.sub(r'Exit at :\s+', '', tblRow.find_element_by_class_name("akHri").text)
+                    rowDict['REC_CLOSE_DATE'] = self.__today                
 
         return rowDict
 

@@ -157,7 +157,7 @@ class app():
                     recDict = self.__paytm.prepareRecDict(rowDict)
                     status = self.__send2PayTm('UPDATE_REC', recDict)
                     rowDict['ACK'] = 'ACK' if status else 'NACK'
-                    persistence.updateDb(rowDict, [['MKT_SYMBOL', rowDict['MKT_SYMBOL']], ['STRATEGY', rowDict['STRATEGY']], ['REC_DATE', rowDict['REC_DATE']], ['REC_TIME', rowDict['REC_TIME']]])
+                    persistence.updateDb(rowDict, [['MKT_SYMBOL', dbDict['MKT_SYMBOL']], ['STRATEGY', dbDict['STRATEGY']], ['REC_DATE', dbDict['REC_DATE']], ['REC_TIME', dbDict['REC_TIME']]])
                     self.__logger.info('Updated Recommendation %s', rowDict)
                 #else: Nothing to be done
 
